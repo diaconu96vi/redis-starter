@@ -1,11 +1,24 @@
+using HealthChecks.UI.Client;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Redis.Starter.Services;
+using StackExchange.Redis;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp => ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")));
+builder.Services.AddSingleton<ICacheService, CacheService>();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddHealthChecks()
+    .AddRedis(builder.Configuration.GetConnectionString("Redis"), name: "redis-check", tags: new[] { "redis" })
+    .AddCheck("healthy-test", () => HealthCheckResult.Healthy("Good"));
 
+//For UI
+builder.Services.AddHealthChecksUI().AddInMemoryStorage();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -16,12 +29,23 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
 app.MapWeatherForecastEndpoints();
+//For health endpoint
+app.MapHealthChecks("/health", new HealthCheckOptions()
+{
+    Predicate = _ => true,
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+});
+
+//For UI
+app.MapHealthChecksUI(options =>
+{
+    options.UIPath = "/healthchecks-ui";
+});
 app.MapControllers();
 app.Run();
 
-internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
+internal record WeatherForecast(DateOnly Date, int TemperatureC, string Summary)
 {
     public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
 }
@@ -46,7 +70,7 @@ public static class WeatherForecastEndpoints
                 summaries[Random.Shared.Next(summaries.Length)]
             ))
             .ToArray();
-                    return forecast;
+            return TypedResults.Ok(forecast); ;
         })
         .WithName("GetAllWeatherForecasts")
         .WithOpenApi();
